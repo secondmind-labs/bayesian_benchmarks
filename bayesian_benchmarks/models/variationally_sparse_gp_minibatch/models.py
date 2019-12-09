@@ -1,9 +1,11 @@
 import gpflow
 import numpy as np
+import tensorflow as tf
 from scipy.cluster.vq import kmeans2
 from scipy.stats import norm
 
-class RegressionModel(object):
+    
+class RegressionModel:
     def __init__(self, is_test=False, seed=0):
         if is_test:
             class ARGS:
@@ -25,29 +27,36 @@ class RegressionModel(object):
                 initial_likelihood_var = 0.01
         self.ARGS = ARGS
         self.model = None
+        self._model = None
+        self._model_objective = None
+        self._adam_opt = None
+        self._natgrad_opt = None
 
     def fit(self, X, Y):
-        if X.shape[0] > self.ARGS.num_inducing:
-            Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0]
+        num_data, input_dim = X.shape
+
+        if num_data > self.ARGS.num_inducing:
+            Z, _ = kmeans2(X, self.ARGS.num_inducing, minit='points')
         else:
             # pad with random values
-            Z = np.concatenate([X, np.random.randn(self.ARGS.num_inducing - X.shape[0], X.shape[1])], 0)
+            Z = np.concatenate([X, np.random.randn(self.ARGS.num_inducing - num_data, input_dim)],
+                               axis=0)
 
         # make model if necessary
         if not self.model:
-            kern = gpflow.kernels.RBF(X.shape[1], lengthscales=float(X.shape[1])**0.5)
-            lik = gpflow.likelihoods.Gaussian()
-            lik.variance = self.ARGS.initial_likelihood_var
-            mb_size = self.ARGS.minibatch_size if X.shape[0] > self.ARGS.minibatch_size else None
-            self.model = gpflow.models.SVGP(X, Y, kern, lik, feat=Z, minibatch_size=mb_size)
+            kernel = gpflow.kernels.SquaredExponential(lengthscale=float(input_dim)**0.5)
+            lik = gpflow.likelihoods.Gaussian(variance=self.ARGS.initial_likelihood_var)
+            self._model = gpflow.models.SVGP(kernel, likelihood=lik, inducing_variable=Z)
 
-            var_list = [[self.model.q_mu, self.model.q_sqrt]]
-            self.model.q_mu.set_trainable(False)
-            self.model.q_sqrt.set_trainable(False)
-            self.ng = gpflow.train.NatGradOptimizer(gamma=self.ARGS.gamma).make_optimize_tensor(self.model, var_list=var_list)
-            self.adam = gpflow.train.AdamOptimizer(self.ARGS.adam_lr).make_optimize_tensor(self.model)
+            @tf.function(autograph=False)
+            def objective(data):
+                return - self._model.log_marginal_likelihood(data)
+            self._model_objective = objective
 
-            self.sess = self.model.enquire_session()
+            self._model.q_mu.set_trainable(False)
+            self._model.q_sqrt.set_trainable(False)
+            self._natgrad_opt = gpflow.optimizers.NaturalGradient(gamma=self.ARGS.gamma)
+            self._adam_opt = tf.optimizers.Adam(learning_rate=self.ARGS.adam_lr)
 
             iters = self.ARGS.iterations
 
@@ -55,18 +64,27 @@ class RegressionModel(object):
             iters = self.ARGS.small_iterations
 
         # we might have new data
-        self.model.X.assign(X, session=self.sess)
-        self.model.Y.assign(Y, session=self.sess)
-        self.model.feature.Z.assign(Z, session=self.sess)
+        self._model.inducing_variable.Z.assign(Z)
+        num_outputs = self._model.q_sqrt.shape[0]
+        self._model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)))
+        self._model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]))
 
-        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, Y.shape[1])), session=self.sess)
-        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [Y.shape[1], 1, 1]), session=self.sess)
+        batch_size = np.minimum(self.ARGS.minibatch_size, num_data)
+        data = (X, Y)
+        data_minibatch = tf.data.Dataset.from_tensor_slices(data) \
+            .prefetch(num_data).repeat().shuffle(num_data) \
+            .batch(batch_size)
+        data_minibatch_it = iter(data_minibatch)
 
+        def objective_closure() -> tf.Tensor:
+            batch = next(data_minibatch_it)
+            return self._model_objective(batch)
+
+        variational_params = [self._model.q_mu, self._model.q_sqrt]
 
         for _ in range(iters):
-            self.sess.run(self.ng)
-            self.sess.run(self.adam)
-        self.model.anchor(session=self.sess)
+            self._natgrad_opt.minimize(objective_closure, var_list=variational_params)
+            self._adam_opt.minimize(objective_closure, var_list=self._model.trainable_variables)
 
     def predict(self, Xs):
         return self.model.predict_y(Xs, session=self.sess)
@@ -78,7 +96,7 @@ class RegressionModel(object):
         return m + np.random.randn(num_samples, N, D) * (v ** 0.5)
 
 
-class ClassificationModel(object):
+class ClassificationModel:
     def __init__(self, K, is_test=False, seed=0):
         if is_test:
             class ARGS:
@@ -97,15 +115,19 @@ class ClassificationModel(object):
         self.ARGS = ARGS
 
         self.K = K
-        self.model = None
+        self._model = None
+        self._model_objective = None
+        self._opt = None
 
     def fit(self, X, Y):
-        Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0] if X.shape[0] > self.ARGS.num_inducing else X.copy()
+        num_data, input_dim = X.shape
+
+        if num_data > self.ARGS.num_inducing:
+            Z, _ = kmeans2(X, self.ARGS.num_inducing, minit='points')
+        else:
+            Z = X.copy()
 
         if not self.model:
-            # NB mb_size does not change once the model is created
-            mb_size = self.ARGS.minibatch_size if X.shape[0] >= self.ARGS.minibatch_size else None
-
             if self.K == 2:
                 lik = gpflow.likelihoods.Bernoulli()
                 num_latent = 1
@@ -113,39 +135,46 @@ class ClassificationModel(object):
                 lik = gpflow.likelihoods.MultiClass(self.K)
                 num_latent = self.K
 
-            kern = gpflow.kernels.RBF(X.shape[1], lengthscales=float(X.shape[1]) ** 0.5)
-            self.model = gpflow.models.SVGP(X, Y, kern, lik,
-                                            feat=Z,
-                                            whiten=False,
-                                            num_latent=num_latent,
-                                            minibatch_size=mb_size)
+            kernel = gpflow.kernels.SquaredExponential(lengthscale=float(input_dim)**0.5)
+            self._model = gpflow.models.SVGP(kernel, likelihood=lik, inducing_variable=Z,
+                                             whiten=False, num_latent=num_latent)
 
-            self.opt = gpflow.train.AdamOptimizer(self.ARGS.adam_lr)
+            @tf.function(autograph=False)
+            def objective(data):
+                return - self._model.log_marginal_likelihood(data)
+            self._model_objective = objective
 
-            self.sess = self.model.enquire_session()
+            self._opt = tf.optimizers.Adam(self.ARGS.adam_lr)
+
             iters = self.ARGS.iterations
 
         else:
             iters = self.ARGS.small_iterations
 
         # we might have new data
-        self.model.X.assign(X, session=self.sess)
-        self.model.Y.assign(Y, session=self.sess)
-        self.model.feature.Z.assign(Z, session=self.sess)
+        self._model.inducing_variable.Z.assign(Z)
+        num_outputs = self._model.q_sqrt.shape[0]
+        self._model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)))
+        self._model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]))
 
-        num_outputs = self.model.q_sqrt.shape[0]
-        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)), session=self.sess)
-        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]), session=self.sess)
+        batch_size = np.minimum(self.ARGS.minibatch_size, num_data)
+        data = (X, Y)
+        data_minibatch = tf.data.Dataset.from_tensor_slices(data) \
+            .prefetch(num_data).repeat().shuffle(num_data) \
+            .batch(batch_size)
+        data_minibatch_it = iter(data_minibatch)
 
-        self.opt.minimize(self.model, maxiter=iters, session=self.sess)
+        def objective_closure() -> tf.Tensor:
+            batch = next(data_minibatch_it)
+            return self._model_objective(batch)
+
+        for _ in range(iters):
+            self._opt.minimize(objective_closure, var_list=self._model.trainable_variables)
 
     def predict(self, Xs):
-        m, v = self.model.predict_y(Xs, session=self.sess)
+        m, v = self.model.predict_y(Xs)
         if self.K == 2:
             # convert Bernoulli to onehot
-            return np.concatenate([1 - m, m], 1)
+            return np.concatenate([1 - m, m], axis=1)
         else:
             return m
-
-
-
