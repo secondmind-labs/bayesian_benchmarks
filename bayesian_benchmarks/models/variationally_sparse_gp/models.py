@@ -21,14 +21,13 @@ class RegressionModel:
                 initial_likelihood_var = 0.01
         self.ARGS = ARGS
         self._model = None
-        self._opt = None
         self._model_objective = None
 
     def fit(self, X, Y):
         num_data, input_dim = X.shape
 
         if num_data > self.ARGS.num_inducing:
-            Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0]
+            Z, _ = kmeans2(X, self.ARGS.num_inducing, minit='points')
         else:
             # pad with random values
             Z = np.concatenate([X, np.random.randn(self.ARGS.num_inducing - num_data, input_dim)],
@@ -36,24 +35,25 @@ class RegressionModel:
 
         # make model if necessary
         if self._model is None:
-            data = tf.Variable(X, trainable=False), tf.Variable(Y, trainable=False)
+            data = (tf.Variable(X, trainable=False), tf.Variable(Y, trainable=False))
             kernel = gpflow.kernels.SquaredExponential(lengthscale=float(input_dim)**0.5)
             # Gaussian likelihood: use SGPR
             self._model = gpflow.models.SGPR(data, kernel, inducing_variable=Z,
                                              noise_variance=self.ARGS.initial_likelihood_var)
+
             @tf.function(autograph=False)
             def objective():
                 return - self._model.log_marginal_likelihood()
             self._model_objective = objective
-            self._opt = gpflow.optimizers.Scipy()
 
         # we might have new data
         self._model.data[0].assign(X)
         self._model.data[1].assign(Y)
         self._model.inducing_variable.Z.assign(Z)
 
-        self._opt.minimize(self._model_objective, self._model.trainable_variables,
-                           options=dict(maxiter=self.ARGS.iterations))
+        opt = gpflow.optimizers.Scipy()
+        opt.minimize(self._model_objective, self._model.trainable_variables,
+                     options=dict(maxiter=self.ARGS.iterations))
 
     def predict(self, Xs):
         return self._model.predict_y(Xs)
@@ -84,7 +84,6 @@ class ClassificationModel:
         self.K = K
         self._model = None
         self._model_objective = None
-        self._opt = None
 
     def fit(self, X, Y):
         num_data, input_dim = X.shape
@@ -109,11 +108,9 @@ class ClassificationModel:
                                              num_latent=num_latent)
 
             @tf.function(autograph=False)
-            def objective(X, Y):
-                return - self._model.log_marginal_likelihood((X, Y))
+            def objective(data):
+                return - self._model.log_marginal_likelihood(data)
             self._model_objective = objective
-
-            self._opt = gpflow.optimizers.Scipy()
 
             iters = self.ARGS.iterations
 
@@ -127,15 +124,19 @@ class ClassificationModel:
         self._model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)))
         self._model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]))
 
+        data = (tf.constant(X), tf.constant(Y))
+
         def objective_closure():
-            return self._model_objective(tf.constant(X), tf.constant(Y))
-        self._opt.minimize(objective_closure, self._model.trainable_variables,
-                           options=dict(maxiter=iters))
+            return self._model_objective(data)
+
+        opt = gpflow.optimizers.Scipy()
+        opt.minimize(objective_closure, self._model.trainable_variables,
+                     options=dict(maxiter=iters))
 
     def predict(self, Xs):
         m, v = self._model.predict_y(Xs)
         if self.K == 2:
             # convert Bernoulli to one-hot
-            return np.concatenate([1 - m, m], 1)
+            return np.concatenate([1 - m, m], axis=1)
         else:
             return m
