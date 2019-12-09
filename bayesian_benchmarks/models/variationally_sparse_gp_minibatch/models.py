@@ -4,6 +4,10 @@ import tensorflow as tf
 from scipy.cluster.vq import kmeans2
 from scipy.stats import norm
 
+try:
+    from tqdm import trange
+except ImportError:
+    trange = range
     
 class RegressionModel:
     def __init__(self, is_test=False, seed=0):
@@ -89,7 +93,7 @@ class RegressionModel:
         def adam_step():
             self._adam_opt.minimize(objective_closure, var_list=self._model.trainable_variables)
 
-        for _ in range(iters):
+        for _ in trange(iters):
             natgrad_step()
             adam_step()
 
@@ -179,7 +183,7 @@ class ClassificationModel:
         def adam_step():
             self._opt.minimize(objective_closure, var_list=self._model.trainable_variables)
 
-        for _ in range(iters):
+        for _ in trange(iters):
             adam_step()
 
     def predict(self, Xs):
