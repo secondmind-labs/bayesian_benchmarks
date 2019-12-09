@@ -26,7 +26,6 @@ class RegressionModel:
                 minibatch_size = 1000
                 initial_likelihood_var = 0.01
         self.ARGS = ARGS
-        self.model = None
         self._model = None
         self._model_objective = None
         self._adam_opt = None
@@ -43,7 +42,7 @@ class RegressionModel:
                                axis=0)
 
         # make model if necessary
-        if not self.model:
+        if self._model is None:
             kernel = gpflow.kernels.SquaredExponential(lengthscale=float(input_dim)**0.5)
             lik = gpflow.likelihoods.Gaussian(variance=self.ARGS.initial_likelihood_var)
             self._model = gpflow.models.SVGP(kernel, likelihood=lik, inducing_variable=Z)
@@ -53,8 +52,8 @@ class RegressionModel:
                 return - self._model.log_marginal_likelihood(data)
             self._model_objective = objective
 
-            self._model.q_mu.set_trainable(False)
-            self._model.q_sqrt.set_trainable(False)
+            self._model.q_mu.trainable = False
+            self._model.q_sqrt.trainable = False
             self._natgrad_opt = gpflow.optimizers.NaturalGradient(gamma=self.ARGS.gamma)
             self._adam_opt = tf.optimizers.Adam(learning_rate=self.ARGS.adam_lr)
 
@@ -80,14 +79,22 @@ class RegressionModel:
             batch = next(data_minibatch_it)
             return self._model_objective(batch)
 
-        variational_params = [self._model.q_mu, self._model.q_sqrt]
+        variational_params = [(self._model.q_mu, self._model.q_sqrt)]
 
-        for _ in range(iters):
+        @tf.function
+        def natgrad_step():
             self._natgrad_opt.minimize(objective_closure, var_list=variational_params)
+
+        @tf.function
+        def adam_step():
             self._adam_opt.minimize(objective_closure, var_list=self._model.trainable_variables)
 
+        for _ in range(iters):
+            natgrad_step()
+            adam_step()
+
     def predict(self, Xs):
-        return self.model.predict_y(Xs, session=self.sess)
+        return self._model.predict_y(Xs)
 
     def sample(self, Xs, num_samples):
         m, v = self.predict(Xs)
@@ -127,7 +134,7 @@ class ClassificationModel:
         else:
             Z = X.copy()
 
-        if not self.model:
+        if self._model is None:
             if self.K == 2:
                 lik = gpflow.likelihoods.Bernoulli()
                 num_latent = 1
@@ -168,11 +175,15 @@ class ClassificationModel:
             batch = next(data_minibatch_it)
             return self._model_objective(batch)
 
-        for _ in range(iters):
+        @tf.function
+        def adam_step():
             self._opt.minimize(objective_closure, var_list=self._model.trainable_variables)
 
+        for _ in range(iters):
+            adam_step()
+
     def predict(self, Xs):
-        m, v = self.model.predict_y(Xs)
+        m, v = self._model.predict_y(Xs)
         if self.K == 2:
             # convert Bernoulli to onehot
             return np.concatenate([1 - m, m], axis=1)
