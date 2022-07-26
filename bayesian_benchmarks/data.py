@@ -83,7 +83,7 @@ class Dataset(object):
         return not os.path.isfile(self.datapath)
 
     def download(self):
-        logging.info('donwloading {} data'.format(self.name))
+        logging.info('downloading {} data'.format(self.name))
 
         is_zipped = np.any([z in self.url for z in ['.gz', '.zip', '.tar']])
 
@@ -103,7 +103,7 @@ class Dataset(object):
 
             # os.remove(filename)
 
-        logging.info('finished donwloading {} data'.format(self.name))
+        logging.info('finished downloading {} data'.format(self.name))
 
     def read_data(self):
         raise NotImplementedError
@@ -150,7 +150,26 @@ class Energy(Dataset):
 @add_regression
 class Kin8nm(Dataset):
     N, D, name = 8192, 8, 'kin8nm'
-    url = 'http://mldata.org/repository/data/download/csv/csv_result-kin8nm'
+    url = 'https://www.dcc.fc.up.pt/~ltorgo/Regression/kinematics.tar.gz'
+
+    @property
+    def datapath(self):
+        return os.path.join(self.datadir, 'Kinematics/kin8nm.data')
+
+    def download(self):
+        logging.info('downloading {} data'.format(self.name))
+
+        filename = os.path.join(self.datadir, self.url.split('/')[-1])
+        with urlopen(self.url) as response, open(filename, 'wb') as outfile:
+            data = response.read()
+            outfile.write(data)
+
+        import tarfile
+        with tarfile.open(filename, 'r:gz') as t:
+            t.extractall(path=self.datadir)
+
+        logging.info('finished downloading {} data'.format(self.name))
+
     def read_data(self):
         data = pandas.read_csv(self.datapath, header=None).values
         X_raw, Y_raw = data[..., :-1], data[..., -1].reshape(-1, 1)
