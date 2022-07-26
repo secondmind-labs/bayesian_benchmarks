@@ -46,6 +46,7 @@ def normalize(X):
 
 class Dataset(object):
     def __init__(self, split=0, prop=0.9):
+
         if self.needs_download:
             self.download()
 
@@ -152,7 +153,7 @@ class Kin8nm(Dataset):
     url = 'http://mldata.org/repository/data/download/csv/csv_result-kin8nm'
     def read_data(self):
         data = pandas.read_csv(self.datapath, header=None).values
-        X_raw, Y_raw = data[1:, 1:-1], data[1:, -1].reshape(-1, 1)
+        X_raw, Y_raw = data[..., :-1], data[..., -1].reshape(-1, 1)
         assert X_raw.shape == (self.N, self.D)
         assert Y_raw.shape == (self.N, 1)
         return X_raw.astype(np.float), Y_raw.astype(np.float)
