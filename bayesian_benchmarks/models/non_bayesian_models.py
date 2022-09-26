@@ -8,6 +8,7 @@ from sklearn import tree
 from sklearn import ensemble
 from sklearn import neural_network
 
+
 def regression_model(model):
     class SKLWrapperRegression(object):
         def __init__(self, is_test=False, seed=0):
@@ -92,13 +93,13 @@ def non_bayesian_model(name, task):
         return regression_model(ensemble.GradientBoostingRegressor())
 
     elif name == 'gradient_boosting_machine' and task == 'classification':
-        return classification_model(ensemble.GradientBoostingClassifier()) # default is 100 estimators
+        return classification_model(ensemble.GradientBoostingClassifier())  # default is 100 estimators
 
     if name == 'adaboost' and task == 'regression':
         return regression_model(ensemble.AdaBoostRegressor())
 
     elif name == 'adaboost' and task == 'classification':
-        return classification_model(ensemble.AdaBoostClassifier()) # default is 100 estimators
+        return classification_model(ensemble.AdaBoostClassifier())  # default is 100 estimators
 
     if name == 'mlp' and task == 'regression':
         return regression_model(neural_network.MLPRegressor())

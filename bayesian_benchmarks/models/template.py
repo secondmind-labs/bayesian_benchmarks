@@ -19,68 +19,77 @@ It should be feasible to call fit and predict many times (e.g. avoid rebuilding 
 """
 
 import numpy as np
+from abc import ABC, abstractmethod
+from typing import Tuple
 
 
-class RegressionModel:
-    def __init__(self, is_test=False, seed=0):
+class RegressionModel(ABC):
+    @abstractmethod
+    def __init__(self, is_test: bool = False, seed: int = 0) -> None:
         """
-        If is_test is True your model should train and predict in a few seconds (i.e. suitable for travis)
-        """
-        pass
-
-    def fit(self, X : np.ndarray, Y : np.ndarray):
-        """
-        Train the model (and probably create the model, too, since there is no shape information on the __init__)
-
-        :param X: numpy array, of shape N, Dx
-        :param Y: numpy array, of shape N, Dy
-        :return:
+        :param is_test: whether to run quickly for testing purposes
         """
         pass
 
-    def predict(self, Xs : np.ndarray):
+    @abstractmethod
+    def fit(self, X: np.ndarray, Y: np.ndarray) -> None:
+        """
+        Train the model (and probably create the model, too, since there is no
+        shape information on the __init__)
+
+        :param X: numpy array, of shape [N, Dx]
+        :param Y: numpy array, of shape [N, Dy]
+        """
+        pass
+
+    @abstractmethod
+    def predict(self, Xs: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """
         The predictive mean and variance
 
-        :param Xs: numpy array, of shape N, Dx
-        :return: mean, var, both of shape N, Dy
+        :param Xs: numpy array, of shape [N, Dx]
+        :return: mean, var, both of shape [N, Dy]
         """
-        raise NotImplementedError
+        pass
 
-    def sample(self, Xs : np.ndarray, S : int):
+    @abstractmethod
+    def sample(self, Xs: np.ndarray, S: int) -> np.ndarray:
         """
         Samples from the posterior
-        :param Xs: numpy array, of shape N, Dx
+        :param Xs: numpy array, of shape [N, Dx]
         :param S: number of samples
-        :return: numpy array, of shape (S, N, Dy)
+        :return: numpy array, of shape [S, N, Dy]
         """
-        raise NotImplementedError
+        pass
 
 
-class ClassificationModel:
-    def __init__(self, K, is_test=False, seed=0):
+class ClassificationModel(ABC):
+    @abstractmethod
+    def __init__(self, K: int, is_test: bool = False, seed: int = 0) -> None:
         """
         :param K: number of classes
         :param is_test: whether to run quickly for testing purposes
         """
 
-    def fit(self, X : np.ndarray, Y : np.ndarray):
+    @abstractmethod
+    def fit(self, X: np.ndarray, Y: np.ndarray) -> None:
         """
-        Train the model (and probably create the model, too, since there is no shape information on the __init__)
+        Train the model (and probably create the model, too, since there is no
+        shape information on the __init__)
 
         Note Y is not onehot, but is an int array of labels in {0, 1, ..., K-1}
 
-        :param X: numpy array, of shape N, Dx
-        :param Y: numpy array, of shape N, 1
-        :return:
+        :param X: numpy array, of shape [N, Dx]
+        :param Y: numpy array, of shape [N, 1]
         """
         pass
 
-    def predict(self, Xs : np.ndarray):
+    @abstractmethod
+    def predict(self, Xs: np.ndarray) -> np.ndarray:
         """
         The predictive probabilities
 
-        :param Xs: numpy array, of shape N, Dx
-        :return: p, of shape (N, K)
+        :param Xs: numpy array, of shape [N, Dx]
+        :return: p, of shape [N, K]
         """
-        raise NotImplementedError
+        pass
