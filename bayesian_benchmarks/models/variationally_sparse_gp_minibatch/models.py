@@ -48,7 +48,7 @@ class RegressionModel:
 
         # make model if necessary
         if self.model is None:
-            lengthscales = np.full(D, float(D)**0.5)
+            lengthscales = np.full(input_dim, float(input_dim)**0.5)
             kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
             lik = gpflow.likelihoods.Gaussian(variance=self.ARGS.initial_likelihood_var)
             self.model = gpflow.models.SVGP(kernel, likelihood=lik, inducing_variable=Z, num_data=num_data)
@@ -140,7 +140,7 @@ class ClassificationModel:
                 lik = gpflow.likelihoods.MultiClass(self.K)
                 num_latent_gps = self.K
 
-            lengthscales = np.full(D, float(D)**0.5)
+            lengthscales = np.full(input_dim, float(input_dim)**0.5)
             kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
             self.model = gpflow.models.SVGP(kernel, likelihood=lik, inducing_variable=Z,
                                             num_latent_gps=num_latent_gps)

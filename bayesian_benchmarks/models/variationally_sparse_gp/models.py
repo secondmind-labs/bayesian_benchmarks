@@ -36,7 +36,7 @@ class RegressionModel:
         # make model if necessary
         if self.model is None:
             data = (tf.Variable(X, trainable=False), tf.Variable(Y, trainable=False))
-            lengthscales = np.full(D, float(D)**0.5)
+            lengthscales = np.full(input_dim, float(input_dim)**0.5)
             kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
             # Gaussian likelihood: use SGPR
             self.model = gpflow.models.SGPR(data, kernel, inducing_variable=Z,
@@ -99,7 +99,7 @@ class ClassificationModel:
                 lik = gpflow.likelihoods.MultiClass(self.K)
                 num_latent_gps = self.K
 
-            lengthscales = np.full(D, float(D)**0.5)
+            lengthscales = np.full(input_dim, float(input_dim)**0.5)
             kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
             self.model = gpflow.models.SVGP(kernel, lik,
                                             inducing_variable=Z,
