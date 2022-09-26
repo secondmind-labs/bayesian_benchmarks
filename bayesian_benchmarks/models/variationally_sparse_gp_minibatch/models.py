@@ -1,4 +1,5 @@
 import gpflow
+import tensorflow as tf
 import numpy as np
 from scipy.cluster.vq import kmeans2
 from scipy.stats import norm
@@ -27,27 +28,27 @@ class RegressionModel(object):
         self.model = None
 
     def fit(self, X, Y):
-        if X.shape[0] > self.ARGS.num_inducing:
+        N, D = X.shape
+        _, K = Y.shape
+
+        if N > self.ARGS.num_inducing:
             Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0]
         else:
             # pad with random values
-            Z = np.concatenate([X, np.random.randn(self.ARGS.num_inducing - X.shape[0], X.shape[1])], 0)
+            Z = np.concatenate([X, np.random.randn(self.ARGS.num_inducing - N, D)], 0)
 
         # make model if necessary
         if not self.model:
-            kern = gpflow.kernels.RBF(X.shape[1], lengthscales=float(X.shape[1])**0.5)
-            lik = gpflow.likelihoods.Gaussian()
-            lik.variance = self.ARGS.initial_likelihood_var
-            mb_size = self.ARGS.minibatch_size if X.shape[0] > self.ARGS.minibatch_size else None
-            self.model = gpflow.models.SVGP(X, Y, kern, lik, feat=Z, minibatch_size=mb_size)
+            lengthscales = np.full(D, float(D)**0.5)
+            kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
+            lik = gpflow.likelihoods.Gaussian(variance=self.ARGS.initial_likelihood_var)
+            self.model = gpflow.models.SVGP(kernel, lik, inducing_variable=Z, num_data=N)
 
-            var_list = [[self.model.q_mu, self.model.q_sqrt]]
-            self.model.q_mu.set_trainable(False)
-            self.model.q_sqrt.set_trainable(False)
-            self.ng = gpflow.train.NatGradOptimizer(gamma=self.ARGS.gamma).make_optimize_tensor(self.model, var_list=var_list)
-            self.adam = gpflow.train.AdamOptimizer(self.ARGS.adam_lr).make_optimize_tensor(self.model)
-
-            self.sess = self.model.enquire_session()
+            self.variational_params = [(self.model.q_mu, self.model.q_sqrt)]
+            gpflow.set_trainable(self.model.q_mu, False)
+            gpflow.set_trainable(self.model.q_sqrt, False)
+            self.natgrad = gpflow.optimizers.NaturalGradient(gamma=self.ARGS.gamma)
+            self.adam = tf.optimizers.Adam(self.ARGS.adam_lr)
 
             iters = self.ARGS.iterations
 
@@ -55,21 +56,32 @@ class RegressionModel(object):
             iters = self.ARGS.small_iterations
 
         # we might have new data
-        self.model.X.assign(X, session=self.sess)
-        self.model.Y.assign(Y, session=self.sess)
-        self.model.feature.Z.assign(Z, session=self.sess)
+        self.model.inducing_variable.Z.assign(Z)
 
-        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, Y.shape[1])), session=self.sess)
-        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [Y.shape[1], 1, 1]), session=self.sess)
+        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, K)))
+        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [K, 1, 1]))
 
+        if N > self.ARGS.minibatch_size:
+            loss = self.model.training_loss_closure((X, Y))
+        else:
+            train_dataset = tf.data.Dataset.from_tensor_slices((X, Y)).repeat().shuffle(N)
+            train_iter = iter(train_dataset.batch(self.ARGS.minibatch_size))
+            loss = self.model.training_loss_closure(train_iter)
+
+        @tf.function
+        def natgrad_step():
+            self.natgrad.minimize(loss, var_list=self.variational_params)
+
+        @tf.function
+        def adam_step():
+            self.adam.minimize(loss, var_list=self.model.trainable_variables)
 
         for _ in range(iters):
-            self.sess.run(self.ng)
-            self.sess.run(self.adam)
-        self.model.anchor(session=self.sess)
+            natgrad_step()
+            adam_step()
 
     def predict(self, Xs):
-        return self.model.predict_y(Xs, session=self.sess)
+        return self.model.predict_y(Xs)
 
     def sample(self, Xs, num_samples):
         m, v = self.predict(Xs)
@@ -100,12 +112,10 @@ class ClassificationModel(object):
         self.model = None
 
     def fit(self, X, Y):
-        Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0] if X.shape[0] > self.ARGS.num_inducing else X.copy()
+        N, D = X.shape
+        Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0] if N > self.ARGS.num_inducing else X.copy()
 
         if not self.model:
-            # NB mb_size does not change once the model is created
-            mb_size = self.ARGS.minibatch_size if X.shape[0] >= self.ARGS.minibatch_size else None
-
             if self.K == 2:
                 lik = gpflow.likelihoods.Bernoulli()
                 num_latent = 1
@@ -113,39 +123,45 @@ class ClassificationModel(object):
                 lik = gpflow.likelihoods.MultiClass(self.K)
                 num_latent = self.K
 
-            kern = gpflow.kernels.RBF(X.shape[1], lengthscales=float(X.shape[1]) ** 0.5)
-            self.model = gpflow.models.SVGP(X, Y, kern, lik,
+            lengthscales = np.full(D, float(D)**0.5)
+            kernel = gpflow.kernels.RBF(lengthscales=lengthscales)
+            self.model = gpflow.models.SVGP(kernel, lik,
                                             feat=Z,
-                                            whiten=False,
-                                            num_latent=num_latent,
-                                            minibatch_size=mb_size)
+                                            num_latent_gps=num_latent,
+                                            num_data=N)
 
-            self.opt = gpflow.train.AdamOptimizer(self.ARGS.adam_lr)
+            self.opt = tf.optimizers.Adam(self.ARGS.adam_lr)
 
-            self.sess = self.model.enquire_session()
             iters = self.ARGS.iterations
 
         else:
             iters = self.ARGS.small_iterations
 
         # we might have new data
-        self.model.X.assign(X, session=self.sess)
-        self.model.Y.assign(Y, session=self.sess)
-        self.model.feature.Z.assign(Z, session=self.sess)
+        self.model.inducing_variable.Z.assign(Z)
 
         num_outputs = self.model.q_sqrt.shape[0]
-        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)), session=self.sess)
-        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]), session=self.sess)
+        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)))
+        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]))
 
-        self.opt.minimize(self.model, maxiter=iters, session=self.sess)
+        if N < self.ARGS.minibatch_size:
+            loss = self.model.training_loss_closure((X, Y))
+        else:
+            train_dataset = tf.data.Dataset.from_tensor_slices((X, Y)).repeat().shuffle(N)
+            train_iter = iter(train_dataset.batch(self.ARGS.minibatch_size))
+            loss = self.model.training_loss_closure(train_iter)
+
+        @tf.function
+        def step():
+            self.opt.minimize(loss, self.model.trainable_variables)
+
+        for _ in range(iters):
+            step()
 
     def predict(self, Xs):
-        m, v = self.model.predict_y(Xs, session=self.sess)
+        m, v = self.model.predict_y(Xs)
         if self.K == 2:
             # convert Bernoulli to onehot
             return np.concatenate([1 - m, m], 1)
         else:
             return m
-
-
-

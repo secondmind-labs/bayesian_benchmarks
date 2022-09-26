@@ -21,38 +21,35 @@ class RegressionModel(object):
         self.model = None
 
     def fit(self, X, Y):
-        if X.shape[0] > self.ARGS.num_inducing:
+        N, D = X.shape
+        if N > self.ARGS.num_inducing:
             Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0]
         else:
             # pad with random values
-            Z = np.concatenate([X, np.random.randn(self.ARGS.num_inducing - X.shape[0], X.shape[1])], 0)
+            Z = np.concatenate([X, np.random.randn(self.ARGS.num_inducing - N, D)], 0)
 
         # make model if necessary
         if not self.model:
-            kern = gpflow.kernels.RBF(X.shape[1], lengthscales=float(X.shape[1])**0.5)
-            lik = gpflow.likelihoods.Gaussian()
-            lik.variance = self.ARGS.initial_likelihood_var
+            lengthscales = np.full(D, float(D)**0.5)
+            kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
 
-            self.model = gpflow.models.SGPR(X, Y, kern, feat=Z)
-            self.model.likelihood.variance = lik.variance.read_value()
-            self.sess = self.model.enquire_session()
-            self.opt = gpflow.train.ScipyOptimizer()
+            self.model = gpflow.models.SGPR((X, Y), kernel, inducing_variable=Z, noise_variance=self.ARGS.initial_likelihood_var)
+            self.opt = gpflow.optimizers.Scipy()
 
         # we might have new data
-        self.model.X.assign(X, session=self.sess)
-        self.model.Y.assign(Y, session=self.sess)
-        self.model.feature.Z.assign(Z, session=self.sess)
+        self.model.data = (X, Y)
+        self.model.inducing_variable.Z.assign(Z)
 
-        self.opt.minimize(self.model, session=self.sess, maxiter=self.ARGS.iterations)
+        self.opt.minimize(self.model.training_loss, self.model.trainable_variables, options=dict(maxiter=self.ARGS.iterations))
 
     def predict(self, Xs):
-        return self.model.predict_y(Xs, session=self.sess)
+        return self.model.predict_y(Xs)
 
     def sample(self, Xs, num_samples):
         m, v = self.predict(Xs)
-        N, D = np.shape(m)
+        N, L = np.shape(m)
         m, v = np.expand_dims(m, 0), np.expand_dims(v, 0)
-        return m + np.random.randn(num_samples, N, D) * (v ** 0.5)
+        return m + np.random.randn(num_samples, N, L) * (v ** 0.5)
 
 
 class ClassificationModel(object):
@@ -75,7 +72,8 @@ class ClassificationModel(object):
         self.model = None
 
     def fit(self, X, Y):
-        Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0] if X.shape[0] > self.ARGS.num_inducing else X.copy()
+        N, D = X.shape
+        Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0] if N > self.ARGS.num_inducing else X.copy()
 
         if not self.model:
             if self.K == 2:
@@ -85,15 +83,15 @@ class ClassificationModel(object):
                 lik = gpflow.likelihoods.MultiClass(self.K)
                 num_latent = self.K
 
-            kern = gpflow.kernels.RBF(X.shape[1], lengthscales=float(X.shape[1]) ** 0.5)
-            self.model = gpflow.models.SVGP(X, Y, kern, lik,
-                                            feat=Z,
-                                            whiten=False,
-                                            num_latent=num_latent,
-                                            minibatch_size=None)
+            lengthscales = np.full(D, float(D)**0.5)
+            kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
 
-            self.sess = self.model.enquire_session()
-            self.opt = gpflow.train.ScipyOptimizer()
+            self.model = gpflow.models.SVGP(kernel, lik,
+                                            inducing_variable=Z,
+                                            num_latent_gps=num_latent,
+                                            num_data=N)
+
+            self.opt = gpflow.optimizers.Scipy()
 
             iters = self.ARGS.iterations
 
@@ -101,23 +99,18 @@ class ClassificationModel(object):
             iters = self.ARGS.small_iterations
 
         # we might have new data
-        self.model.X.assign(X, session=self.sess)
-        self.model.Y.assign(Y, session=self.sess)
-        self.model.feature.Z.assign(Z, session=self.sess)
+        self.model.inducing_variable.Z.assign(Z)
 
         num_outputs = self.model.q_sqrt.shape[0]
-        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)), session=self.sess)
-        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]), session=self.sess)
+        self.model.q_mu.assign(np.zeros((self.ARGS.num_inducing, num_outputs)))
+        self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]))
 
-        self.opt.minimize(self.model, maxiter=iters, session=self.sess)
+        self.opt.minimize(self.model.training_loss_closure((X, Y)), self.model.trainable_variables, options=dict(maxiter=iters))
 
     def predict(self, Xs):
-        m, v = self.model.predict_y(Xs, session=self.sess)
+        m, v = self.model.predict_y(Xs)
         if self.K == 2:
             # convert Bernoulli to onehot
             return np.concatenate([1 - m, m], 1)
         else:
             return m
-
-
-
