@@ -36,15 +36,13 @@ class RegressionModel:
         # make model if necessary
         if self.model is None:
             data = (tf.Variable(X, trainable=False), tf.Variable(Y, trainable=False))
-            kernel = gpflow.kernels.SquaredExponential(lengthscale=float(input_dim)**0.5)
+            lengthscales = np.full(D, float(D)**0.5)
+            kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
             # Gaussian likelihood: use SGPR
             self.model = gpflow.models.SGPR(data, kernel, inducing_variable=Z,
-                                             noise_variance=self.ARGS.initial_likelihood_var)
+                                            noise_variance=self.ARGS.initial_likelihood_var)
 
-            @tf.function(autograph=False)
-            def objective():
-                return - self.model.log_marginal_likelihood()
-            self.model_objective = objective
+            self.model_objective = self.model.training_loss_closure()
 
         # we might have new data
         self.model.data[0].assign(X)
@@ -60,9 +58,9 @@ class RegressionModel:
 
     def sample(self, Xs, num_samples):
         m, v = self.predict(Xs)
-        N, D = np.shape(m)
+        N, L = np.shape(m)
         m, v = np.expand_dims(m, 0), np.expand_dims(v, 0)
-        return m + np.random.randn(num_samples, N, D) * (v ** 0.5)
+        return m + np.random.randn(num_samples, N, L) * (v ** 0.5)
 
 
 class ClassificationModel:
@@ -89,28 +87,24 @@ class ClassificationModel:
         num_data, input_dim = X.shape
 
         if num_data > self.ARGS.num_inducing:
-            Z = kmeans2(X, self.ARGS.num_inducing, minit='points')[0]
+            Z, _ = kmeans2(X, self.ARGS.num_inducing, minit='points')
         else:
             Z = X.copy()
 
         if self.model is None:
             if self.K == 2:
                 lik = gpflow.likelihoods.Bernoulli()
-                num_latent = 1
+                num_latent_gps = 1
             else:
                 lik = gpflow.likelihoods.MultiClass(self.K)
-                num_latent = self.K
+                num_latent_gps = self.K
 
-            kernel = gpflow.kernels.SquaredExponential(lengthscale=float(input_dim) ** 0.5)
+            lengthscales = np.full(D, float(D)**0.5)
+            kernel = gpflow.kernels.SquaredExponential(lengthscales=lengthscales)
             self.model = gpflow.models.SVGP(kernel, lik,
-                                             inducing_variable=Z,
-                                             whiten=False,
-                                             num_latent=num_latent)
-
-            @tf.function(autograph=False)
-            def objective(data):
-                return - self.model.log_marginal_likelihood(data)
-            self.model_objective = objective
+                                            inducing_variable=Z,
+                                            num_latent_gps=num_latent_gps,
+                                            num_data=num_data)
 
             iters = self.ARGS.iterations
 
@@ -125,12 +119,10 @@ class ClassificationModel:
         self.model.q_sqrt.assign(np.tile(np.eye(self.ARGS.num_inducing)[None], [num_outputs, 1, 1]))
 
         data = (tf.constant(X), tf.constant(Y))
-
-        def objective_closure():
-            return self.model_objective(data)
+        model_objective = self.model.training_loss_closure(data)
 
         opt = gpflow.optimizers.Scipy()
-        opt.minimize(objective_closure, self.model.trainable_variables,
+        opt.minimize(model_objective, self.model.trainable_variables,
                      options=dict(maxiter=iters))
 
     def predict(self, Xs):
