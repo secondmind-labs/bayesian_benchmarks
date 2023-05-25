@@ -28,7 +28,7 @@ class RegressionModel:
         """
         pass
 
-    def fit(self, X : np.ndarray, Y : np.ndarray):
+    def fit(self, X: np.ndarray, Y: np.ndarray):
         """
         Train the model (and probably create the model, too, since there is no shape information on the __init__)
 
@@ -38,7 +38,7 @@ class RegressionModel:
         """
         pass
 
-    def predict(self, Xs : np.ndarray):
+    def predict(self, Xs: np.ndarray):
         """
         The predictive mean and variance
 
@@ -47,7 +47,7 @@ class RegressionModel:
         """
         raise NotImplementedError
 
-    def sample(self, Xs : np.ndarray, S : int):
+    def sample(self, Xs: np.ndarray, S: int):
         """
         Samples from the posterior
         :param Xs: numpy array, of shape N, Dx
@@ -64,7 +64,7 @@ class ClassificationModel:
         :param is_test: whether to run quickly for testing purposes
         """
 
-    def fit(self, X : np.ndarray, Y : np.ndarray):
+    def fit(self, X: np.ndarray, Y: np.ndarray):
         """
         Train the model (and probably create the model, too, since there is no shape information on the __init__)
 
@@ -76,7 +76,7 @@ class ClassificationModel:
         """
         pass
 
-    def predict(self, Xs : np.ndarray):
+    def predict(self, Xs: np.ndarray):
         """
         The predictive probabilities
 

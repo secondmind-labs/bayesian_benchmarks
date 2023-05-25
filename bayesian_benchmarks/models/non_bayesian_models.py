@@ -8,6 +8,7 @@ from sklearn import tree
 from sklearn import ensemble
 from sklearn import neural_network
 
+
 def regression_model(model):
     class SKLWrapperRegression(object):
         def __init__(self, is_test=False, seed=0):
@@ -25,7 +26,7 @@ def regression_model(model):
             m, v = self.predict(Xs)
             N, D = np.shape(m)
             m, v = np.expand_dims(m, 0), np.expand_dims(v, 0)
-            return m + np.random.randn(num_samples, N, D) * (v ** 0.5)
+            return m + np.random.randn(num_samples, N, D) * (v**0.5)
 
     return SKLWrapperRegression
 
@@ -55,55 +56,61 @@ def classification_model(model):
 
 
 def non_bayesian_model(name, task):
-    if name == 'linear' and task == 'regression':
+    if name == "linear" and task == "regression":
         return regression_model(linear_model.LinearRegression())
 
-    elif name == 'linear' and task == 'classification':
+    elif name == "linear" and task == "classification":
         return classification_model(linear_model.LogisticRegression())
 
-    if name == 'svm' and task == 'regression':
+    if name == "svm" and task == "regression":
         return regression_model(svm.SVR())
 
-    elif name == 'svm' and task == 'classification':
+    elif name == "svm" and task == "classification":
         return classification_model(svm.SVC(probability=True))
 
-    if name == 'knn' and task == 'regression':
+    if name == "knn" and task == "regression":
         return regression_model(neighbors.KNeighborsRegressor())  # default is K=5
 
-    elif name == 'knn' and task == 'classification':
+    elif name == "knn" and task == "classification":
         return classification_model(neighbors.KNeighborsClassifier())  # default is K=5
 
-    elif name == 'naive_bayes' and task == 'classification':
+    elif name == "naive_bayes" and task == "classification":
         return classification_model(naive_bayes.GaussianNB())
 
-    if name == 'decision_tree' and task == 'regression':
+    if name == "decision_tree" and task == "regression":
         return regression_model(tree.DecisionTreeRegressor())
 
-    elif name == 'decision_tree' and task == 'classification':
+    elif name == "decision_tree" and task == "classification":
         return classification_model(tree.DecisionTreeClassifier())
 
-    if name == 'random_forest' and task == 'regression':
+    if name == "random_forest" and task == "regression":
         return regression_model(ensemble.RandomForestRegressor())
 
-    elif name == 'random_forest' and task == 'classification':
-        return classification_model(ensemble.RandomForestClassifier())  # default is 10 estimators
+    elif name == "random_forest" and task == "classification":
+        return classification_model(
+            ensemble.RandomForestClassifier()
+        )  # default is 10 estimators
 
-    if name == 'gradient_boosting_machine' and task == 'regression':
+    if name == "gradient_boosting_machine" and task == "regression":
         return regression_model(ensemble.GradientBoostingRegressor())
 
-    elif name == 'gradient_boosting_machine' and task == 'classification':
-        return classification_model(ensemble.GradientBoostingClassifier()) # default is 100 estimators
+    elif name == "gradient_boosting_machine" and task == "classification":
+        return classification_model(
+            ensemble.GradientBoostingClassifier()
+        )  # default is 100 estimators
 
-    if name == 'adaboost' and task == 'regression':
+    if name == "adaboost" and task == "regression":
         return regression_model(ensemble.AdaBoostRegressor())
 
-    elif name == 'adaboost' and task == 'classification':
-        return classification_model(ensemble.AdaBoostClassifier()) # default is 100 estimators
+    elif name == "adaboost" and task == "classification":
+        return classification_model(
+            ensemble.AdaBoostClassifier()
+        )  # default is 100 estimators
 
-    if name == 'mlp' and task == 'regression':
+    if name == "mlp" and task == "regression":
         return regression_model(neural_network.MLPRegressor())
 
-    elif name == 'mlp' and task == 'classification':
+    elif name == "mlp" and task == "classification":
         return classification_model(neural_network.MLPClassifier())
 
     else:  # pragma: no cover

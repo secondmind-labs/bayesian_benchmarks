@@ -7,7 +7,8 @@ analysis of calibration etc.
 """
 
 import sys
-sys.path.append('../')
+
+sys.path.append("../")
 
 import argparse
 import numpy as np
@@ -19,19 +20,26 @@ from bayesian_benchmarks.models.get_model import get_classification_model
 from bayesian_benchmarks.database_utils import Database
 from bayesian_benchmarks.tasks.utils import meanlogsumexp
 
+
 def parse_args():  # pragma: no cover
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default='variationally_sparse_gp', nargs='?', type=str)
-    parser.add_argument("--dataset", default='statlog-german-credit', nargs='?', type=str)
-    parser.add_argument("--split", default=0, nargs='?', type=int)
-    parser.add_argument("--seed", default=0, nargs='?', type=int)
-    parser.add_argument("--database_path", default='', nargs='?', type=str)
+    parser.add_argument(
+        "--model", default="variationally_sparse_gp", nargs="?", type=str
+    )
+    parser.add_argument(
+        "--dataset", default="statlog-german-credit", nargs="?", type=str
+    )
+    parser.add_argument("--split", default=0, nargs="?", type=int)
+    parser.add_argument("--seed", default=0, nargs="?", type=int)
+    parser.add_argument("--database_path", default="", nargs="?", type=str)
     return parser.parse_args()
 
-def run(ARGS, data=None, model=None, is_test=False):
 
+def run(ARGS, data=None, model=None, is_test=False):
     data = data or get_classification_data(ARGS.dataset, split=ARGS.split)
-    model = model or get_classification_model(ARGS.model)(data.K, is_test=is_test, seed=ARGS.seed)
+    model = model or get_classification_model(ARGS.model)(
+        data.K, is_test=is_test, seed=ARGS.seed
+    )
 
     def onehot(Y, K):
         return np.eye(K)[Y.flatten().astype(int)].reshape(Y.shape[:-1] + (K,))
@@ -41,7 +49,10 @@ def run(ARGS, data=None, model=None, is_test=False):
     model.fit(data.X_train, data.Y_train)
     p = model.predict(data.X_test)  # [N_test x K] or [samples x N_test x K]
 
-    assert p.ndim in {2, 3}  # 3-dim in case of approximate predictions (multiple samples per each X)
+    assert p.ndim in {
+        2,
+        3,
+    }  # 3-dim in case of approximate predictions (multiple samples per each X)
 
     # clip very large and small probs
     eps = 1e-12
@@ -54,38 +65,36 @@ def run(ARGS, data=None, model=None, is_test=False):
     res = {}
 
     if p.ndim == 2:  # keep analysis as in the original code in case 2-dim predictions
-
         logp = multinomial.logpmf(Y_oh, n=1, p=p)  # [N_test]
 
-        res['test_loglik'] = np.average(logp)
+        res["test_loglik"] = np.average(logp)
 
         pred = np.argmax(p, axis=-1)
 
     else:  # compute metrics in case of 3-dim predictions
-
-        res['test_loglik'] = []
+        res["test_loglik"] = []
 
         for n in range(p.shape[0]):  # iterate through samples
             logp = multinomial.logpmf(Y_oh, n=1, p=p[n])  # [N_test]
-            res['test_loglik'].append(logp)
+            res["test_loglik"].append(logp)
 
         # Mixture test likelihood (mean over per data point evaluations)
-        res['test_loglik'] = meanlogsumexp(res['test_loglik'])
+        res["test_loglik"] = meanlogsumexp(res["test_loglik"])
 
         p = np.mean(p, axis=0)
         pred = np.argmax(p, axis=-1)
 
-    res['test_acc'] = np.average(np.array(pred == data.Y_test.flatten()).astype(float))
+    res["test_acc"] = np.average(np.array(pred == data.Y_test.flatten()).astype(float))
 
     if not is_test:
         res.update(ARGS.__dict__)
 
     if not is_test:  # pragma: no cover
         with Database(ARGS.database_path) as db:
-            db.write('classification', res)
+            db.write("classification", res)
 
-    return res 
+    return res
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     run(parse_args())

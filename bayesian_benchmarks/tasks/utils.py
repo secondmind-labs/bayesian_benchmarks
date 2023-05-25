@@ -8,7 +8,10 @@ from typing import List, Union
 import numpy as np
 from scipy.special import logsumexp
 
-def meanlogsumexp(logps: Union[List[np.ndarray], np.ndarray], axis: int=0) -> np.ndarray:
+
+def meanlogsumexp(
+    logps: Union[List[np.ndarray], np.ndarray], axis: int = 0
+) -> np.ndarray:
     """
     Mean log sum exp of a log p list.
     :param logps: list of log probs [samples x data points] or [samples x data points x output dim]
